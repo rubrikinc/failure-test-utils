@@ -89,3 +89,41 @@ func (fg *FailureGeneratorImpl) FailMaybe() error {
 	}
 	return nil
 }
+
+// ConditionalFailureGenerator generates artificial failures
+// TODO(CDM-362117)(Ambar) Move to tcp-proxy code
+type ConditionalFailureGenerator interface {
+	FailureGenerator
+	FailOnCondition(buf []byte) error
+}
+
+// ConditionalFailureGeneratorImpl implements FailureGenerator and uses a Condition
+// which when satisfied causes failures
+type ConditionalFailureGeneratorImpl struct {
+	Fg        FailureGenerator
+	Condition func(buf []byte) bool
+}
+
+// FailOnCondition checks the condition and applies failure based on the
+// FailureGenerator params
+func (cfg *ConditionalFailureGeneratorImpl) FailOnCondition(buf []byte) error {
+	if cfg.Condition(buf) {
+		return cfg.FailMaybe()
+	}
+	return nil
+}
+
+// SetDelayConfig sets configuration for injecting artificial delay
+func (cfg *ConditionalFailureGeneratorImpl) SetDelayConfig(c DelayConfig) error {
+	return cfg.Fg.SetDelayConfig(c)
+}
+
+// SetFailureProbability sets the desired artificial failure probability
+func (cfg *ConditionalFailureGeneratorImpl) SetFailureProbability(p float32) error {
+	return cfg.Fg.SetFailureProbability(p)
+}
+
+// FailMaybe returns an artificial error with configured probability
+func (cfg *ConditionalFailureGeneratorImpl) FailMaybe() error {
+	return cfg.Fg.FailMaybe()
+}
