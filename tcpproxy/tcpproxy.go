@@ -140,12 +140,21 @@ func (t *testTCPProxy) copy(
 				log.Infof(t.ctx, "received from %v: %s", src.RemoteAddr(),
 					string(buf[:nr]))
 			}
-			if err := t.recvFg.FailMaybe(); err != nil {
-				return errors.Wrap(err, "injected recv failure")
+
+			// TODO(CDM-362117)(Ambar) Change to a KMP filter to make this robust
+			condFailGen, ok := (t.recvFg).(failuregen.ConditionalFailureGenerator)
+			if ok {
+				if err := condFailGen.FailOnCondition(buf); err != nil {
+					return errors.Wrap(err, "injected recv failure on satisfying condition")
+				}
+			} else {
+				if err := t.recvFg.FailMaybe(); err != nil {
+					return errors.Wrap(err, "injected recv failure")
+				}
 			}
 		}
-
 		_, err := dest.Write(buf[:nr])
+
 		if err != nil {
 			return errors.Wrap(err, "write")
 		}
