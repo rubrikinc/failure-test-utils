@@ -43,20 +43,23 @@ func NewTCPProxy(
 	recvFg failuregen.FailureGenerator,
 	acceptFg failuregen.FailureGenerator,
 ) (TCPProxy, error) {
+	uuidStr := uuid.New().String()
 	t := &testTCPProxy{
-		ctx:          ctx,
+		ctx:          log.WithLogTag(ctx, uuidStr, nil),
 		frontendPort: frontendPort,
 		backendPort:  backendPort,
 		quit:         make(chan interface{}),
 		recvFg:       recvFg,
-		acceptFg:     acceptFg}
-	l, err := net.Listen("tcp", localhostAddress(frontendPort))
+		acceptFg:     acceptFg,
+		stats:        ProxyStats{}}
+	l, err := net.Listen("tcp", LocalhostAddress(frontendPort))
 	if err != nil {
 		return nil, errors.Wrap(err, "listen")
 	}
 	t.listener = l
 	t.wg.Add(1)
 	go t.serve()
+	log.Infof(t.ctx, "Started TCP-proxy on %d", frontendPort)
 	return t, nil
 }
 
@@ -68,8 +71,44 @@ func (t *testTCPProxy) Stop() {
 		t.frontendPort,
 		t.backendPort)
 	close(t.quit)
-	t.listener.Close()
+	if err := t.listener.Close(); err != nil {
+		log.Error(t.ctx, err)
+	}
 	t.wg.Wait()
+}
+
+// Stats provides the tcp proxy stats
+func (t *testTCPProxy) Stats() ProxyStats {
+	return t.stats
+}
+
+func (st ProxyStats) String() string {
+	return fmt.Sprintf(
+		"stats{activeConn: %d, frontendDrop: %d, backendDrop: %d}\n",
+		st.activeConnCtr.Load(),
+		st.FrontendDropCtr.Load(),
+		st.backendDropCtr.Load())
+}
+
+// BlockIncomingConns blocks all incoming connection to the TCP proxy by
+// dropping the connection.
+func (t *testTCPProxy) BlockIncomingConns() {
+	t.acceptFg.SetFailureProbability(1.0)
+}
+
+// close connections gracefully
+func (t *testTCPProxy) closeFrontendConn(
+	conn net.Conn,
+	reason string,
+) {
+	if log.V(3) {
+		log.Infof(t.ctx, "closing connection to %v", conn.RemoteAddr())
+	}
+	_ = conn.Close()
+	if reason == "drop" {
+		t.stats.FrontendDropCtr.Inc()
+	}
+	t.stats.activeConnCtr.Dec()
 }
 
 func (t *testTCPProxy) serve() {
@@ -87,10 +126,15 @@ func (t *testTCPProxy) serve() {
 			}
 		} else {
 			if err := t.acceptFg.FailMaybe(); err != nil {
-				log.Warningf(t.ctx, "injected accept failure", err)
-				conn.Close()
+				log.Warningf(
+					t.ctx,
+					"injected accept failure %v,  %v",
+					conn.RemoteAddr(),
+					err)
+				t.closeFrontendConn(conn, "drop")
 			}
 			t.wg.Add(1)
+			t.stats.activeConnCtr.Inc()
 			go func() {
 				log.Infof(t.ctx, "Accepted connection from %v",
 					conn.RemoteAddr())
@@ -104,8 +148,7 @@ func (t *testTCPProxy) serve() {
 }
 
 func (t *testTCPProxy) copy(
-	dest,
-	src net.Conn,
+	dest, src net.Conn,
 	selfTermCh chan struct{},
 	peerTermCh chan struct{},
 ) error {
@@ -145,10 +188,12 @@ func (t *testTCPProxy) copy(
 			condFailGen, ok := (t.recvFg).(failuregen.ConditionalFailureGenerator)
 			if ok {
 				if err := condFailGen.FailOnCondition(buf); err != nil {
+					t.stats.backendDropCtr.Inc()
 					return errors.Wrap(err, "injected recv failure on satisfying condition")
 				}
 			} else {
 				if err := t.recvFg.FailMaybe(); err != nil {
+					t.stats.backendDropCtr.Inc()
 					return errors.Wrap(err, "injected recv failure")
 				}
 			}
@@ -166,8 +211,8 @@ func (t *testTCPProxy) copy(
 }
 
 func (t *testTCPProxy) handle(frontendConn net.Conn) error {
-	defer frontendConn.Close()
-	backendConn, err := net.Dial("tcp", localhostAddress(t.backendPort))
+	defer t.closeFrontendConn(frontendConn, "")
+	backendConn, err := net.Dial("tcp", LocalhostAddress(t.backendPort))
 	if err != nil {
 		return errors.Wrap(err, "dial")
 	}
