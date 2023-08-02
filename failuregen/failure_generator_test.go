@@ -3,11 +3,16 @@
 package failuregen_test
 
 import (
+	"fmt"
+	"reflect"
+	"runtime"
+	"strings"
 	"syscall"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 
 	"rubrik/cqlproxy/failuregen"
 )
@@ -130,4 +135,23 @@ func TestFailureGeneratorNeverSucceedsForFailProbabilityOne(t *testing.T) {
 	}
 
 	assert.Zero(t, successCount)
+}
+
+func TestInjectedFailureErrStackTraceShowsOnlyRelevantStack(t *testing.T) {
+	g := failuregen.NewFailureGenerator()
+	err := g.SetFailureProbability(1.0)
+	require.NoError(t, err)
+	err = g.FailMaybe()
+
+	// https://stackoverflow.com/questions/32925344/why-is-there-a-fm-suffix-when-getting-a-functions-name-in-go
+	method := reflect.ValueOf((*failuregen.FailureGeneratorImpl).FailMaybe).Pointer()
+	methodName := runtime.FuncForPC(method).Name()
+
+	stackTrace := fmt.Sprintf("%+v", err)
+
+	require.Truef(t, strings.Contains(
+		stackTrace,
+		methodName,
+	), "Stack trace:\n\n%s\n\n"+
+		"should contain: %s", stackTrace, methodName)
 }

@@ -3,6 +3,7 @@
 package failuregen
 
 import (
+	"fmt"
 	"math/rand"
 	"time"
 
@@ -10,7 +11,8 @@ import (
 	"go.uber.org/atomic"
 )
 
-var errInjectedFailure = errors.New("Injected failure")
+// ErrInjectedFailure for injected failures
+var ErrInjectedFailure = fmt.Errorf("injected failure")
 
 // OneMillion is a convenient constant for 1M
 const OneMillion = int32(1000000)
@@ -85,7 +87,7 @@ func (fg *FailureGeneratorImpl) FailMaybe() error {
 			time.Duration(rand.Int31n(fg.maxDelayMicros.Load())) * time.Microsecond)
 	}
 	if rand.Int31n(OneMillion) < fg.failurePpm.Load() {
-		return errInjectedFailure
+		return errors.WithStack(ErrInjectedFailure)
 	}
 	return nil
 }
