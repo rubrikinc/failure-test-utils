@@ -31,6 +31,7 @@ type FailureGenerator interface {
 	SetDelayConfig(c DelayConfig) error
 	SetFailureProbability(p float32) error
 	FailMaybe() error
+	DeepCopy() FailureGenerator
 }
 
 type delayFn func(time.Duration)
@@ -40,11 +41,15 @@ type FailureGeneratorImpl struct {
 	delayPpm       atomic.Int32
 	maxDelayMicros atomic.Int32
 	DelayFn        delayFn
+	randGen        *rand.Rand
 }
 
 // NewFailureGenerator creates a new failure-generator
 func NewFailureGenerator() FailureGenerator {
-	return &FailureGeneratorImpl{DelayFn: time.Sleep}
+	return &FailureGeneratorImpl{
+		DelayFn: time.Sleep,
+		randGen: rand.New(rand.NewSource(time.Now().Unix())),
+	}
 }
 
 // ppm => parts per million
@@ -82,14 +87,26 @@ func (fg *FailureGeneratorImpl) SetFailureProbability(p float32) error {
 
 // FailMaybe returns an artificial error with configured probability
 func (fg *FailureGeneratorImpl) FailMaybe() error {
-	if rand.Int31n(OneMillion) < fg.delayPpm.Load() {
+	if fg.randGen.Int31n(OneMillion) < fg.delayPpm.Load() {
 		fg.DelayFn(
 			time.Duration(rand.Int31n(fg.maxDelayMicros.Load())) * time.Microsecond)
 	}
-	if rand.Int31n(OneMillion) < fg.failurePpm.Load() {
+	n := fg.randGen.Int31n(OneMillion)
+	if n < fg.failurePpm.Load() {
 		return errors.WithStack(ErrInjectedFailure)
 	}
 	return nil
+}
+
+// DeepCopy returns a deep copy of the original object
+func (fg *FailureGeneratorImpl) DeepCopy() FailureGenerator {
+	newFg := &FailureGeneratorImpl{}
+	newFg.failurePpm.Store(fg.failurePpm.Load())
+	newFg.delayPpm.Store(fg.delayPpm.Load())
+	newFg.maxDelayMicros.Store(fg.maxDelayMicros.Load())
+	newFg.DelayFn = fg.DelayFn
+	newFg.randGen = rand.New(rand.NewSource(time.Now().Unix()))
+	return newFg
 }
 
 // ConditionalFailureGenerator generates artificial failures
@@ -128,4 +145,9 @@ func (cfg *ConditionalFailureGeneratorImpl) SetFailureProbability(p float32) err
 // FailMaybe returns an artificial error with configured probability
 func (cfg *ConditionalFailureGeneratorImpl) FailMaybe() error {
 	return cfg.Fg.FailMaybe()
+}
+
+// DeepCopy is not implemented
+func (cfg *ConditionalFailureGeneratorImpl) DeepCopy() FailureGenerator {
+	panic("implement me")
 }
