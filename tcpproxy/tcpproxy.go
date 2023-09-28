@@ -1,7 +1,6 @@
 // Copyright 2022 Rubrik, Inc.
 
 //go:build !mysql
-// +build !mysql
 
 package testutil
 
@@ -22,6 +21,22 @@ import (
 // TCPProxy is the interface for test L4 proxy
 type TCPProxy interface {
 	Stop()
+	Stats() ProxyStats
+	BlockIncomingConns()
+}
+
+// ProxyStats stores TCP proxy stats
+type ProxyStats struct {
+	// connections accepted by proxy from client, includes only the ones that
+	// are currently getting served by proxy. It should not account for dropped
+	// connections
+	activeConnCtr atomic.Int64
+	// Connections dropped due to failure policies (not accounted in
+	// activeConnCtr
+	FrontendDropCtr atomic.Int64
+	// Connection those were getting served but got dropped due to failure
+	// policy set on the response receiving side.
+	backendDropCtr atomic.Int64
 }
 
 type testTCPProxy struct {
@@ -33,6 +48,7 @@ type testTCPProxy struct {
 	wg           sync.WaitGroup
 	recvFg       failuregen.FailureGenerator
 	acceptFg     failuregen.FailureGenerator
+	stats        ProxyStats
 }
 
 // NewTCPProxy creates a new instance of an L4 test proxy
@@ -75,6 +91,10 @@ func (t *testTCPProxy) Stop() {
 		log.Error(t.ctx, err)
 	}
 	t.wg.Wait()
+	activeConn := t.stats.activeConnCtr.Load()
+	if activeConn != int64(0) {
+		panic(fmt.Sprintf("found %d active conn should be 0", activeConn))
+	}
 }
 
 // Stats provides the tcp proxy stats
@@ -90,10 +110,14 @@ func (st ProxyStats) String() string {
 		st.backendDropCtr.Load())
 }
 
-// BlockIncomingConns blocks all incoming connection to the TCP proxy by
-// dropping the connection.
+// BlockIncomingConns blocks all new incoming connections to the TCP proxy by
+// dropping them. Existing connections which are already accepted and handled
+// by TCP proxy will continue to serve till completed.
 func (t *testTCPProxy) BlockIncomingConns() {
 	t.acceptFg.SetFailureProbability(1.0)
+	if log.V(3) {
+		log.Infof(t.ctx, "Going to drop new connections from client")
+	}
 }
 
 // close connections gracefully
@@ -102,7 +126,8 @@ func (t *testTCPProxy) closeFrontendConn(
 	reason string,
 ) {
 	if log.V(3) {
-		log.Infof(t.ctx, "closing connection to %v", conn.RemoteAddr())
+		log.Infof(t.ctx, "closing connection to %v reason %s",
+			conn.RemoteAddr(), reason)
 	}
 	_ = conn.Close()
 	if reason == "drop" {
@@ -125,6 +150,7 @@ func (t *testTCPProxy) serve() {
 				log.Errorf(t.ctx, "accept error: %v", err)
 			}
 		} else {
+			t.stats.activeConnCtr.Inc()
 			if err := t.acceptFg.FailMaybe(); err != nil {
 				log.Warningf(
 					t.ctx,
@@ -132,9 +158,9 @@ func (t *testTCPProxy) serve() {
 					conn.RemoteAddr(),
 					err)
 				t.closeFrontendConn(conn, "drop")
+				continue
 			}
 			t.wg.Add(1)
-			t.stats.activeConnCtr.Inc()
 			go func() {
 				log.Infof(t.ctx, "Accepted connection from %v",
 					conn.RemoteAddr())
@@ -211,10 +237,10 @@ func (t *testTCPProxy) copy(
 }
 
 func (t *testTCPProxy) handle(frontendConn net.Conn) error {
-	defer t.closeFrontendConn(frontendConn, "")
+	defer t.closeFrontendConn(frontendConn, "task completed")
 	backendConn, err := net.Dial("tcp", LocalhostAddress(t.backendPort))
 	if err != nil {
-		return errors.Wrap(err, "dial")
+		return errors.Wrap(err, "failed dialing to backend port")
 	}
 	defer backendConn.Close()
 	log.Infof(
@@ -233,7 +259,12 @@ func (t *testTCPProxy) handle(frontendConn net.Conn) error {
 	go func() {
 		err := t.copy(backendConn, frontendConn, onwardTermCh, returnTermCh)
 		if err != nil {
-			log.Errorf(t.ctx, "copy from frontend to backend err: %v", err)
+			log.Errorf(
+				t.ctx,
+				"copy from %s to %s err: %v",
+				frontendConn.RemoteAddr(),
+				backendConn.RemoteAddr(),
+				err)
 		}
 		wg.Done()
 	}()
