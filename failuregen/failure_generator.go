@@ -5,8 +5,9 @@ package failuregen
 import (
 	"fmt"
 	"math/rand"
-	"sync"
 	"time"
+
+	"rubrik/util/randutil"
 
 	"github.com/pkg/errors"
 	"go.uber.org/atomic"
@@ -37,48 +38,19 @@ type FailureGenerator interface {
 
 type delayFn func(time.Duration)
 
-// LockedRandGen wrapper on top of math/rand that leverage locking when
-// generating random number and avoid concurrency issue between go-routines
-// sharing the generator.
-type LockedRandGen struct {
-	*rand.Rand
-	mu sync.Mutex
-}
-
-// NewLockedRandGen creates a new instance of LockedRanGen
-func NewLockedRandGen(seed int64) *LockedRandGen {
-	return &LockedRandGen{
-		Rand: rand.New(rand.NewSource(seed)),
-		mu:   sync.Mutex{},
-	}
-}
-
-// Int31n generates a non-negative pseudo random number between
-// [0,n) using synchronization mechanism
-func (r *LockedRandGen) Int31n(n int32) int32 {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	return r.Rand.Int31n(n)
-}
-
-// Int31nWOLockForTest used for testing purpose only
-func (r *LockedRandGen) Int31nWOLockForTest(n int32) int32 {
-	return r.Rand.Int31n(n)
-}
-
 type FailureGeneratorImpl struct {
 	failurePpm     atomic.Int32
 	delayPpm       atomic.Int32
 	maxDelayMicros atomic.Int32
 	DelayFn        delayFn
-	randGen        *LockedRandGen
+	randGen        *randutil.LockedRandGen
 }
 
 // NewFailureGenerator creates a new failure-generator
 func NewFailureGenerator() FailureGenerator {
 	return &FailureGeneratorImpl{
 		DelayFn: time.Sleep,
-		randGen: NewLockedRandGen(time.Now().Unix()),
+		randGen: randutil.NewLockedRandGen(time.Now().Unix()),
 	}
 }
 
@@ -135,7 +107,7 @@ func (fg *FailureGeneratorImpl) DeepCopy() FailureGenerator {
 	newFg.delayPpm.Store(fg.delayPpm.Load())
 	newFg.maxDelayMicros.Store(fg.maxDelayMicros.Load())
 	newFg.DelayFn = fg.DelayFn
-	newFg.randGen = NewLockedRandGen(time.Now().Unix())
+	newFg.randGen = randutil.NewLockedRandGen(time.Now().Unix())
 	return newFg
 }
 
