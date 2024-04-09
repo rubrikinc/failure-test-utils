@@ -7,7 +7,7 @@ import (
 	"math/rand"
 	"time"
 
-	"rubrik/util/randutil"
+	"github.com/rubrikinc/failure-test-utils/randutil"
 
 	"github.com/pkg/errors"
 	"go.uber.org/atomic"

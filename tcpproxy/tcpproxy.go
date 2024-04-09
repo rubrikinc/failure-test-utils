@@ -2,7 +2,7 @@
 
 //go:build !mysql
 
-package testutil
+package tcpproxy
 
 import (
 	"context"
@@ -12,10 +12,12 @@ import (
 	"sync"
 	"time"
 
-	"rubrik/cqlproxy/failuregen"
-	"rubrik/util/log"
+	"github.com/rubrikinc/failure-test-utils/failuregen"
+	"github.com/rubrikinc/failure-test-utils/log"
 
+	"github.com/google/uuid"
 	"github.com/pkg/errors"
+	"go.uber.org/atomic"
 )
 
 // TCPProxy is the interface for test L4 proxy
@@ -68,7 +70,7 @@ func NewTCPProxy(
 		recvFg:       recvFg,
 		acceptFg:     acceptFg,
 		stats:        ProxyStats{}}
-	l, err := net.Listen("tcp", LocalhostAddress(frontendPort))
+	l, err := net.Listen("tcp", localhostAddress(frontendPort))
 	if err != nil {
 		return nil, errors.Wrap(err, "listen")
 	}
@@ -238,7 +240,7 @@ func (t *testTCPProxy) copy(
 
 func (t *testTCPProxy) handle(frontendConn net.Conn) error {
 	defer t.closeFrontendConn(frontendConn, "task completed")
-	backendConn, err := net.Dial("tcp", LocalhostAddress(t.backendPort))
+	backendConn, err := net.Dial("tcp", localhostAddress(t.backendPort))
 	if err != nil {
 		return errors.Wrap(err, "failed dialing to backend port")
 	}

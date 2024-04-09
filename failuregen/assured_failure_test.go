@@ -3,13 +3,12 @@
 package failuregen_test
 
 import (
+	"encoding/json"
 	"os"
 	"testing"
 
+	"github.com/rubrikinc/failure-test-utils/failuregen"
 	"github.com/stretchr/testify/require"
-
-	"rubrik/cqlproxy/failuregen"
-	"rubrik/cqlproxy/testutil"
 )
 
 var knownFailures = []failuregen.FailurePoint{
@@ -30,7 +29,7 @@ var knownFailures = []failuregen.FailurePoint{
 }
 
 func TestAssuredFailureGeneratorInjectsDesiredFailures(t *testing.T) {
-	afp := testutil.AssureFailuresAt(
+	afp := AssureFailuresAt(
 		t,
 		failuregen.AfterAdditiveSchemaChange,
 		failuregen.BeforeMetadataMigration,
@@ -50,7 +49,7 @@ func TestAssuredFailureGeneratorInjectsDesiredFailures(t *testing.T) {
 }
 
 func TestAssuredFailureGeneratorWithNoPlan(t *testing.T) {
-	afp := testutil.AssureFailuresAt(t)
+	afp := AssureFailuresAt(t)
 
 	for _, fp := range knownFailures {
 		require.NoError(t, afp.FailMaybe(fp))
@@ -75,7 +74,7 @@ func TestAssuredFailureGeneratorWithNoPlan(t *testing.T) {
 }
 
 func TestAssuredFailureGeneratorFailsForMalformedPlan(t *testing.T) {
-	afp := testutil.AssureFailuresAt(t)
+	afp := AssureFailuresAt(t)
 
 	os.WriteFile(
 		afp.(*failuregen.AssuredFailurePlanImpl).PlanFilePath,
@@ -87,4 +86,28 @@ func TestAssuredFailureGeneratorFailsForMalformedPlan(t *testing.T) {
 	}
 
 	require.Error(t, afp.FailMaybe("no such failure-point"))
+}
+
+// AssureFailuresAt creates an assured failure plan with given failure points
+func AssureFailuresAt(
+	t *testing.T,
+	fp ...failuregen.FailurePoint,
+) failuregen.AssuredFailurePlan {
+	f, err := os.CreateTemp("", "callisto.assured_failure.json.*")
+	require.NoError(t, err)
+	defer f.Close()
+	bytes, err := json.Marshal(fp)
+	require.NoError(t, err)
+	_, err = f.Write(bytes)
+	require.NoError(t, err)
+	path := f.Name()
+	t.Cleanup(func() {
+		err := os.Remove(path)
+		if !os.IsNotExist(err) {
+			require.NoError(t, err)
+		}
+	})
+	afp := failuregen.NewAssuredFailurePlan()
+	afp.(*failuregen.AssuredFailurePlanImpl).PlanFilePath = path
+	return afp
 }
