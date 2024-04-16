@@ -1,7 +1,3 @@
-// Copyright 2022 Rubrik, Inc.
-
-//go:build !mysql
-
 package tcpproxy
 
 import (
@@ -12,11 +8,10 @@ import (
 	"sync"
 	"time"
 
-	"github.com/rubrikinc/failure-test-utils/failuregen"
-	"github.com/rubrikinc/failure-test-utils/log"
-
 	"github.com/google/uuid"
 	"github.com/pkg/errors"
+	"github.com/rubrikinc/failure-test-utils/failuregen"
+	"github.com/rubrikinc/failure-test-utils/log"
 	"go.uber.org/atomic"
 )
 
@@ -25,6 +20,8 @@ type TCPProxy interface {
 	Stop()
 	Stats() ProxyStats
 	BlockIncomingConns()
+	BackendHostPort() string
+	FrontendHostPort() string
 }
 
 // ProxyStats stores TCP proxy stats
@@ -42,42 +39,50 @@ type ProxyStats struct {
 }
 
 type testTCPProxy struct {
-	ctx          context.Context
-	listener     net.Listener
-	frontendPort int
-	backendPort  int
-	quit         chan interface{}
-	wg           sync.WaitGroup
-	recvFg       failuregen.FailureGenerator
-	acceptFg     failuregen.FailureGenerator
-	stats        ProxyStats
+	ctx              context.Context
+	listener         net.Listener
+	frontendHostPort string
+	backendHostPort  string
+	quit             chan interface{}
+	wg               sync.WaitGroup
+	recvFg           failuregen.FailureGenerator
+	acceptFg         failuregen.FailureGenerator
+	stats            ProxyStats
+}
+
+func (t *testTCPProxy) BackendHostPort() string {
+	return t.backendHostPort
+}
+
+func (t *testTCPProxy) FrontendHostPort() string {
+	return t.frontendHostPort
 }
 
 // NewTCPProxy creates a new instance of an L4 test proxy
 func NewTCPProxy(
 	ctx context.Context,
-	frontendPort int,
-	backendPort int,
+	frontendHostPort string,
+	backendHostPort string,
 	recvFg failuregen.FailureGenerator,
 	acceptFg failuregen.FailureGenerator,
 ) (TCPProxy, error) {
 	uuidStr := uuid.New().String()
 	t := &testTCPProxy{
-		ctx:          log.WithLogTag(ctx, uuidStr, nil),
-		frontendPort: frontendPort,
-		backendPort:  backendPort,
-		quit:         make(chan interface{}),
-		recvFg:       recvFg,
-		acceptFg:     acceptFg,
-		stats:        ProxyStats{}}
-	l, err := net.Listen("tcp", localhostAddress(frontendPort))
+		ctx:              log.WithLogTag(ctx, uuidStr, nil),
+		quit:             make(chan interface{}),
+		frontendHostPort: frontendHostPort,
+		backendHostPort:  backendHostPort,
+		recvFg:           recvFg,
+		acceptFg:         acceptFg,
+		stats:            ProxyStats{}}
+	l, err := net.Listen("tcp", frontendHostPort)
 	if err != nil {
 		return nil, errors.Wrap(err, "listen")
 	}
 	t.listener = l
 	t.wg.Add(1)
 	go t.serve()
-	log.Infof(t.ctx, "Started TCP-proxy on %d", frontendPort)
+	log.Infof(t.ctx, "Started TCP-proxy on %d", frontendHostPort)
 	return t, nil
 }
 
@@ -85,9 +90,9 @@ func NewTCPProxy(
 func (t *testTCPProxy) Stop() {
 	log.Warningf(
 		t.ctx,
-		"Stopping %d -> %d TCP-proxy",
-		t.frontendPort,
-		t.backendPort)
+		"Stopping %s -> %s TCP-proxy",
+		t.frontendHostPort,
+		t.backendHostPort)
 	close(t.quit)
 	if err := t.listener.Close(); err != nil {
 		log.Error(t.ctx, err)
@@ -152,6 +157,7 @@ func (t *testTCPProxy) serve() {
 				log.Errorf(t.ctx, "accept error: %v", err)
 			}
 		} else {
+			log.Infof(t.ctx, "Accepted connection from %v", conn.RemoteAddr())
 			t.stats.activeConnCtr.Inc()
 			if err := t.acceptFg.FailMaybe(); err != nil {
 				log.Warningf(
@@ -240,7 +246,7 @@ func (t *testTCPProxy) copy(
 
 func (t *testTCPProxy) handle(frontendConn net.Conn) error {
 	defer t.closeFrontendConn(frontendConn, "task completed")
-	backendConn, err := net.Dial("tcp", localhostAddress(t.backendPort))
+	backendConn, err := net.Dial("tcp", t.backendHostPort)
 	if err != nil {
 		return errors.Wrap(err, "failed dialing to backend port")
 	}
