@@ -24,6 +24,8 @@ type TCPProxy interface {
 	UnblockAllTraffic()
 	BackendHostPort() string
 	FrontendHostPort() string
+	SetFailureProbability(prob float32)
+	SetDelayConfig(c failuregen.DelayConfig) error
 }
 
 // ProxyStats stores TCP proxy stats
@@ -173,6 +175,26 @@ func (t *testTCPProxy) UnblockAllTraffic() {
 	}
 }
 
+func (t *testTCPProxy) SetFailureProbability(prob float32) {
+	t.acceptFg.SetFailureProbability(prob)
+	t.recvFg.SetFailureProbability(prob)
+	if log.V(3) {
+		log.Infof(t.ctx, "Setting failure probability to %f", prob)
+	}
+}
+
+func (t *testTCPProxy) SetDelayConfig(c failuregen.DelayConfig) error {
+	err := t.recvFg.SetDelayConfig(c)
+	if err != nil {
+		return errors.Wrap(err, "set delay config")
+	}
+	err = t.acceptFg.SetDelayConfig(c)
+	if err != nil {
+		return errors.Wrap(err, "set delay config")
+	}
+	return nil
+}
+
 // close connections gracefully
 func (t *testTCPProxy) closeFrontendConn(
 	conn net.Conn,
@@ -304,8 +326,6 @@ func (t *testTCPProxy) copy(
 					return errors.Wrap(err, "injected recv failure")
 				}
 			}
-			return nil
-
 		}
 		_, err := dest.Write(buf[:nr])
 
