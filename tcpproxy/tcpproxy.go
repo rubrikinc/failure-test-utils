@@ -304,8 +304,6 @@ func (t *testTCPProxy) copy(
 					return errors.Wrap(err, "injected recv failure")
 				}
 			}
-			return nil
-
 		}
 		_, err := dest.Write(buf[:nr])
 
