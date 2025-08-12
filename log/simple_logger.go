@@ -70,8 +70,11 @@ func (s *simpleLogger) FatalfDepth(ctx context.Context, depth int, format string
 }
 
 func (s *simpleLogger) V(level int32) bool {
-	log.SetLevel(log.TraceLevel)
-	return true
+	return log.IsLevelEnabled(log.Level(level))
+}
+
+func (s *simpleLogger) SetLogLevel(level int32) {
+	log.SetLevel(log.Level(level))
 }
 
 func (s *simpleLogger) WithLogTag(ctx context.Context, name string, value interface{}) context.Context {
