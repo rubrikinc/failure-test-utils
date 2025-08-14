@@ -40,6 +40,8 @@ type Logger interface {
 	FatalfDepth(ctx context.Context, depth int, format string, args ...interface{})
 	// V returns whether the given verbosity should be logged
 	V(level int32) bool
+	// SetLogLevel sets the log level
+	SetLogLevel(level int32)
 	// WithLogTag returns a context with a log tag
 	WithLogTag(ctx context.Context, name string, value interface{}) context.Context
 	// Flush the logger
@@ -116,6 +118,10 @@ func FatalfDepth(ctx context.Context, depth int, format string, args ...interfac
 // V returns whether the given verbosity should be logged
 func V(level int32) bool {
 	return logger.l.V(level)
+}
+
+func SetLogLevel(level int32) {
+	logger.l.SetLogLevel(level)
 }
 
 // WithLogTag returns a context with a log tag

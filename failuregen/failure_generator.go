@@ -46,11 +46,17 @@ type FailureGeneratorImpl struct {
 	randGen        *randutil.LockedRandGen
 }
 
-// NewFailureGenerator creates a new failure-generator
+// NewFailureGenerator creates a new failure-generator with a default seed
 func NewFailureGenerator() FailureGenerator {
+	return NewFailureGeneratorWithSeed(time.Now().UnixNano())
+}
+
+// NewFailureGeneratorWithSeed creates a new failure-generator with the given
+// seed
+func NewFailureGeneratorWithSeed(seed int64) FailureGenerator {
 	return &FailureGeneratorImpl{
 		DelayFn: time.Sleep,
-		randGen: randutil.NewLockedRandGen(time.Now().Unix()),
+		randGen: randutil.NewLockedRandGen(seed),
 	}
 }
 
